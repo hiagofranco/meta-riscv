@@ -26,5 +26,7 @@ RISCV_SBI_PLAT = "generic"
 
 EXTRA_IMAGEDEPENDS += "milkv-duo-fsbl"
 
+MACHINE_ESSENTIAL_EXTRA_RDEPENDS:append:milkv-duo-common = " resize-rootfs"
+
 WKS_FILE ?= "milkv-duo.wks"
 WKS_FILE_DEPENDS:append = " milkv-duo-fsbl"

@@ -1,0 +1,12 @@
+[Unit]
+Description=Grow the root partition and filesystem to fill the SD card
+After=systemd-remount-fs.service
+
+[Service]
+Type=oneshot
+ExecStart=@SBINDIR@/resize-rootfs
+# Only needed once
+ExecStartPost=systemctl disable resize-rootfs.service
+
+[Install]
+WantedBy=multi-user.target
