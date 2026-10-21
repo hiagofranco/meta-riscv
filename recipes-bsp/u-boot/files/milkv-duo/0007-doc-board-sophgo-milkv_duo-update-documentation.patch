@@ -1,0 +1,35 @@
+From 9e4e84c2504cd1b8a28bc7ea88315f4e5dd26a4a Mon Sep 17 00:00:00 2001
+From: Hiago De Franco <hfranco@baylibre.com>
+Date: Tue, 20 Oct 2026 14:48:55 -0300
+Subject: [PATCH 7/8] doc: board: sophgo: milkv_duo: update documentation
+
+List the drivers already supported in mainline, fix the grammar of the
+sentence introducing them and add a blank line before the list to fix
+its indentation on https://docs.u-boot-project.org.
+
+Upstream-Status: Submitted [https://lore.kernel.org/u-boot/20261021-milkv-duo-spl-v1-0-ee7618860237@baylibre.com/]
+Signed-off-by: Hiago De Franco <hfranco@baylibre.com>
+---
+ doc/board/sophgo/milkv_duo.rst | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/doc/board/sophgo/milkv_duo.rst b/doc/board/sophgo/milkv_duo.rst
+index cb2ed1ad987..d99a945a61f 100644
+--- a/doc/board/sophgo/milkv_duo.rst
++++ b/doc/board/sophgo/milkv_duo.rst
+@@ -9,8 +9,11 @@ The CV1800B is a high-performance, low-power 1+1 64-bit RISC-V SoC from Sophgo.
+ 
+ Mainline support
+ ----------------
+-The support for following drivers are already enabled:
++Support for the following drivers is already enabled:
++
+ 1. ns16550 UART Driver.
++2. Synopsys DesignWare MSHC Driver.
++3. Synopsys DesignWare Ethernet Controller.
+ 
+ Building
+ ~~~~~~~~
+-- 
+2.53.0
+

@@ -49,7 +49,15 @@ SRC_URI:append:milkv-duo-common = "file://0001-board-sophgo-milkv_duo-add-enviro
                                    file://0002-riscv-cpu-cv1800b-keep-U-Boot-out-of-reserved-memory.patch \
                                    file://0001-mmc-cv1800b_sdhci-configure-SDHCI-PHY.patch \
                                    "
-
+SRC_URI:append:milkv-duo = " file://0001-binman-add-Sophgo-CV18xx-FIP-entry-type.patch \
+			     file://0002-riscv-cv1800b-add-SPL-support.patch \
+			     file://0003-ram-sophgo-add-CV180x-DDR2-driver.patch \
+			     file://0004-board-sophgo-milkv_duo-add-SPL-support.patch \
+			     file://0005-board-sophgo-milkv_duo-initialize-PLLs-in-SPL.patch \
+			     file://0006-board-sophgo-milkv_duo-enable-RTC-power-and-reset.patch \
+			     file://0007-doc-board-sophgo-milkv_duo-update-documentation.patch \
+			     file://0008-doc-board-sophgo-milkv_duo-document-the-SPL-boot-flo.patch \
+			     "
 SRC_URI:append:milkv-duo256m = " file://0001-board-sophgo-milkv_duo_256m-fix-fdtfile-quoting.patch"
 SRC_URI:append:milkv-duos = " file://0001-riscv64-dts-sophgo-add-SG2000-dtsi.patch \
                               file://0002-riscv64-dts-sophgo-add-initial-Milk-V-Duo-S-board-su.patch \
@@ -88,6 +96,7 @@ _DEPS:riscv32 = "opensbi:do_deploy"
 _DEPS:riscv64 = "opensbi:do_deploy"
 _DEPS:beaglev-fire = ""
 _DEPS:milkv-duo-common = ""
+_DEPS:milkv-duo = "opensbi:do_deploy"
 _DEPS:append:th1520 = " firmware-ddr-training-th1520:do_deploy" 
 
 do_compile[depends] += "${_DEPS}"
@@ -106,6 +115,10 @@ do_compile:prepend:k1() {
 }
 
 do_compile:prepend:visionfive2() {
+    export OPENSBI=${DEPLOY_DIR_IMAGE}/fw_dynamic.bin
+}
+
+do_compile:prepend:milkv-duo() {
     export OPENSBI=${DEPLOY_DIR_IMAGE}/fw_dynamic.bin
 }
 
@@ -139,6 +152,10 @@ do_deploy:append:k1() {
 do_deploy:append:milkv-duo-common() {
     install -m 0644 ${B}/u-boot.dtb ${DEPLOYDIR}
     install -m 0644 ${B}/.config ${DEPLOYDIR}/u-boot.config
+}
+
+do_deploy:append:milkv-duo() {
+    install -m 0644 ${B}/fip.bin ${DEPLOYDIR}
 }
 
 do_deploy:append:visionfive2() {

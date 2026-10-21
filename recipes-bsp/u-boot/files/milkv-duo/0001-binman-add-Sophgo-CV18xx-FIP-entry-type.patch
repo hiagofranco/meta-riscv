@@ -1,0 +1,270 @@
+From f167a503cc8f1e41a450f3aa5ccd22acf41defb9 Mon Sep 17 00:00:00 2001
+From: Hiago De Franco <hfranco@baylibre.com>
+Date: Fri, 18 Sep 2026 10:00:28 -0300
+Subject: [PATCH 1/8] binman: add Sophgo CV18xx FIP entry type
+
+Add a binman entry type that builds the FIP image loaded by the
+BootROM of the Sophgo CV180x/CV181x SoCs named fip.bin.
+
+The image reuses the layout produced by the vendor fiptool: a 4KiB
+param1 header with size and CRC-16/XMODEM checksums, followed by a
+32-byte BL2 header (first instruction jumps over it). Unlike the
+vendor tool, only the entry's subnodes (typically u-boot-spl) are
+packed as BL2, since the BootROM does not use the BLCP, param2,
+monitor or second stage loader it also supports.
+
+Upstream-Status: Submitted [https://lore.kernel.org/u-boot/20261021-milkv-duo-spl-v1-0-ee7618860237@baylibre.com/]
+Signed-off-by: Hiago De Franco <hfranco@baylibre.com>
+---
+ tools/binman/etype/sophgo_cv18xx_fip.py       | 89 +++++++++++++++++++
+ tools/binman/ftest.py                         | 54 +++++++++++
+ .../binman/test/vendor/sophgo_cv18xx_fip.dts  | 18 ++++
+ .../vendor/sophgo_cv18xx_fip_bad_offset.dts   | 16 ++++
+ .../vendor/sophgo_cv18xx_fip_collection.dts   | 19 ++++
+ 5 files changed, 196 insertions(+)
+ create mode 100644 tools/binman/etype/sophgo_cv18xx_fip.py
+ create mode 100644 tools/binman/test/vendor/sophgo_cv18xx_fip.dts
+ create mode 100644 tools/binman/test/vendor/sophgo_cv18xx_fip_bad_offset.dts
+ create mode 100644 tools/binman/test/vendor/sophgo_cv18xx_fip_collection.dts
+
+diff --git a/tools/binman/etype/sophgo_cv18xx_fip.py b/tools/binman/etype/sophgo_cv18xx_fip.py
+new file mode 100644
+index 00000000000..6fb189d2616
+--- /dev/null
++++ b/tools/binman/etype/sophgo_cv18xx_fip.py
+@@ -0,0 +1,89 @@
++# SPDX-License-Identifier: GPL-2.0+
++# Copyright (c) 2026, Hiago De Franco <hfranco@baylibre.com>
++#
++# Entry-type module for the Sophgo CV18xx BootROM FIP image
++#
++
++import binascii
++import struct
++
++from binman.etype.section import Entry_section
++from u_boot_pylib import tools
++
++FIP_ALIGN = 0x200
++PARAM1_SIZE = 0x1000
++
++# jal zero, +32: jump over the BL2 header expected by the BootROM
++BL2_HEADER = struct.pack('<I', 0x0200006f) + tools.get_bytes(0, 28)
++
++# The subnodes follow param1 and the BL2 header
++SPL_OFFSET = PARAM1_SIZE + len(BL2_HEADER)
++
++# Empty register list, only the "scan start" terminator
++CHIP_CONF = struct.pack('<II', 0xffffffa0, 0xffffffff)
++
++
++def fip_cksum(data):
++    """CRC-16/XMODEM followed by the 0xcafe marker"""
++    return struct.pack('<HH', binascii.crc_hqx(data, 0), 0xcafe)
++
++
++class Entry_sophgo_cv18xx_fip(Entry_section):
++    """Sophgo CV18xx FIP image
++
++    This creates the FIP image loaded by the BootROM of the Sophgo CV180x and
++    CV181x SoCs, named fip.bin. The subnodes, typically just u-boot-spl, form
++    the BL2 image, which the BootROM loads into SRAM and runs::
++
++        sophgo-cv18xx-fip {
++            u-boot-spl {
++            };
++        };
++
++    The image contains:
++
++    - param1: 4KiB header with the BL2 size and checksums, read by the BootROM
++    - BL2: a 32-byte header whose first instruction jumps over it, followed by
++      the subnodes, aligned to 512 bytes
++
++    Unlike the vendor fiptool, no BLCP, param2, monitor or second stage loader
++    is packed, as the BootROM does not use them: SPL loads the next stages
++    itself, e.g. from a FIT placed after this entry.
++    """
++
++    def _PackEntries(self):
++        """Pack the subnodes after param1 and the BL2 header"""
++        offset = SPL_OFFSET
++        for entry in self.GetEntries().values():
++            offset = entry.Pack(offset)
++        return offset
++
++    def BuildSectionData(self, required):
++        data = super().BuildSectionData(required)
++        if data is None:
++            return None
++
++        # Once packed, the subnodes are preceded by the space reserved for
++        # param1 and the BL2 header, which is filled in below
++        entries = self.GetEntries().values()
++        if all(entry.offset is not None for entry in entries):
++            if any(entry.offset < SPL_OFFSET for entry in entries):
++                self.Raise('Subnodes must be placed at %#x or later' %
++                           SPL_OFFSET)
++            data = data[SPL_OFFSET:]
++
++        bl2 = BL2_HEADER + data
++        bl2 += tools.get_bytes(0, tools.align(len(bl2), FIP_ALIGN) - len(bl2))
++
++        param1 = bytearray(PARAM1_SIZE)
++        param1[0x00:0x08] = b'CVBL01\n\0'
++        param1[0x90:0xb4] = tools.get_bytes(0xff, 36)           # NOR_INFO
++        struct.pack_into('<I', param1, 0xbc, len(CHIP_CONF))    # CHIP_CONF_SIZE
++        param1[0xc0:0xc4] = fip_cksum(b'')                      # BLCP_IMG_CKSUM
++        param1[0xd4:0xd8] = fip_cksum(bl2)                      # BL2_IMG_CKSUM
++        struct.pack_into('<I', param1, 0xd8, len(bl2))          # BL2_IMG_SIZE
++        param1[0xe8:0xe8 + len(CHIP_CONF)] = CHIP_CONF
++        # PARAM_CKSUM covers NAND_INFO up to the signatures
++        param1[0x0c:0x10] = fip_cksum(param1[0x10:0x800])
++
++        return bytes(param1) + bl2
+diff --git a/tools/binman/ftest.py b/tools/binman/ftest.py
+index a0e8bde7901..413850cf13d 100644
+--- a/tools/binman/ftest.py
++++ b/tools/binman/ftest.py
+@@ -6,6 +6,7 @@
+ #
+ #    python -m unittest func_test.TestFunctional.testHelp
+ 
++import binascii
+ import collections
+ import configparser
+ import glob
+@@ -5598,6 +5599,59 @@ fdt         fdtmap                Extract the devicetree blob from the fdtmap
+         self.assertIn("Node '/binman/renesas-rcar4-sa0': SRAM data longer than 966656 Bytes",
+                       str(exc.exception))
+ 
++    def testSophgoCv18xxFip(self):
++        """Test that binman can produce a Sophgo CV18xx FIP image"""
++        def cksum(buf):
++            return struct.pack('<HH', binascii.crc_hqx(buf, 0), 0xcafe)
++
++        self._SetupSplElf()
++        data = self._DoReadFileRealDtb('vendor/sophgo_cv18xx_fip.dts')
++
++        # param1
++        self.assertEqual(b'CVBL01\n\0', data[:8])
++        self.assertEqual(cksum(data[0x10:0x800]), data[0xc:0x10])
++        self.assertEqual(tools.get_bytes(0xff, 36), data[0x90:0xb4])
++        self.assertEqual(struct.pack('<I', 8), data[0xbc:0xc0])
++        self.assertEqual(cksum(b''), data[0xc0:0xc4])
++        bl2 = data[0x1000:0x1200]
++        self.assertEqual(cksum(bl2), data[0xd4:0xd8])
++        self.assertEqual(struct.pack('<I', len(bl2)), data[0xd8:0xdc])
++        self.assertEqual(struct.pack('<II', 0xffffffa0, 0xffffffff),
++                         data[0xe8:0xf0])
++
++        # BL2: header, SPL and padding to 512 bytes
++        spl_end = 0x20 + len(U_BOOT_SPL_DATA)
++        self.assertEqual(struct.pack('<I', 0x0200006f) +
++                         tools.get_bytes(0, 28), bl2[:0x20])
++        self.assertEqual(U_BOOT_SPL_DATA, bl2[0x20:spl_end])
++        self.assertEqual(tools.get_bytes(0, 0x200 - spl_end), bl2[spl_end:])
++
++        fip = control.images['image'].GetEntries()['sophgo-cv18xx-fip']
++        self.assertEqual(0x1200, fip.size)
++        spl = fip.GetEntries()['u-boot-spl']
++        self.assertEqual(0x1020, spl.offset)
++        self.assertEqual(0x1020, spl.image_pos)
++
++        image_fname = tools.get_output_filename('image.bin')
++        self.assertEqual(U_BOOT_SPL_DATA,
++                         control.ReadEntry(image_fname,
++                                           'sophgo-cv18xx-fip/u-boot-spl'))
++
++    def testSophgoCv18xxFipCollection(self):
++        """Test using a Sophgo CV18xx FIP image in a collection"""
++        self._SetupSplElf()
++        data = self._DoReadFile('vendor/sophgo_cv18xx_fip_collection.dts')
++        self.assertEqual(data[:0x1200], data[0x1200:])
++
++    def testSophgoCv18xxFipBadOffset(self):
++        """Test a Sophgo CV18xx FIP subnode overlapping the headers"""
++        self._SetupSplElf()
++        with self.assertRaises(ValueError) as exc:
++            self._DoReadFile('vendor/sophgo_cv18xx_fip_bad_offset.dts')
++        self.assertIn(
++            "Node '/binman/sophgo-cv18xx-fip': Subnodes must be placed at 0x1020 or later",
++            str(exc.exception))
++
+     def testFitFdtOper(self):
+         """Check handling of a specified FIT operation"""
+         entry_args = {
+diff --git a/tools/binman/test/vendor/sophgo_cv18xx_fip.dts b/tools/binman/test/vendor/sophgo_cv18xx_fip.dts
+new file mode 100644
+index 00000000000..7bec144e2b7
+--- /dev/null
++++ b/tools/binman/test/vendor/sophgo_cv18xx_fip.dts
+@@ -0,0 +1,18 @@
++// SPDX-License-Identifier: GPL-2.0+
++
++/dts-v1/;
++
++/ {
++	#address-cells = <1>;
++	#size-cells = <1>;
++
++	binman {
++		sophgo-cv18xx-fip {
++			u-boot-spl {
++			};
++		};
++
++		fdtmap {
++		};
++	};
++};
+diff --git a/tools/binman/test/vendor/sophgo_cv18xx_fip_bad_offset.dts b/tools/binman/test/vendor/sophgo_cv18xx_fip_bad_offset.dts
+new file mode 100644
+index 00000000000..8c0b68008e2
+--- /dev/null
++++ b/tools/binman/test/vendor/sophgo_cv18xx_fip_bad_offset.dts
+@@ -0,0 +1,16 @@
++// SPDX-License-Identifier: GPL-2.0+
++
++/dts-v1/;
++
++/ {
++	#address-cells = <1>;
++	#size-cells = <1>;
++
++	binman {
++		sophgo-cv18xx-fip {
++			u-boot-spl {
++				offset = <0>;
++			};
++		};
++	};
++};
+diff --git a/tools/binman/test/vendor/sophgo_cv18xx_fip_collection.dts b/tools/binman/test/vendor/sophgo_cv18xx_fip_collection.dts
+new file mode 100644
+index 00000000000..a13cb7b7ba6
+--- /dev/null
++++ b/tools/binman/test/vendor/sophgo_cv18xx_fip_collection.dts
+@@ -0,0 +1,19 @@
++// SPDX-License-Identifier: GPL-2.0+
++
++/dts-v1/;
++
++/ {
++	#address-cells = <1>;
++	#size-cells = <1>;
++
++	binman {
++		collection {
++			content = <&fip>;
++		};
++
++		fip: sophgo-cv18xx-fip {
++			u-boot-spl {
++			};
++		};
++	};
++};
+-- 
+2.53.0
+
